@@ -1,0 +1,126 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  EKS Cluster and managed node group for the Hello World application.
+  Depends on the VPC and IAM stacks being deployed first.
+  Creates the EKS control plane and a managed node group with EC2 instances.
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: hello-world-cluster
+    Description: Name of the EKS cluster
+
+  KubernetesVersion:
+    Type: String
+    Default: '1.29'
+    Description: Kubernetes version for the EKS cluster
+
+  NodeInstanceType:
+    Type: String
+    Default: t3.medium
+    Description: EC2 instance type for worker nodes
+
+  NodeGroupMinSize:
+    Type: Number
+    Default: 2
+    Description: Minimum number of nodes in the node group
+
+  NodeGroupMaxSize:
+    Type: Number
+    Default: 3
+    Description: Maximum number of nodes in the node group
+
+  NodeGroupDesiredSize:
+    Type: Number
+    Default: 2
+    Description: Desired number of nodes in the node group
+
+  VpcStackName:
+    Type: String
+    Default: hello-world-vpc
+    Description: Name of the VPC CloudFormation stack to import values from
+
+  IamStackName:
+    Type: String
+    Default: hello-world-iam
+    Description: Name of the IAM CloudFormation stack to import values from
+
+Resources:
+
+  # ── CLUSTER SECURITY GROUP ────────────────────────────────────────────
+  ClusterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${ClusterName}-cluster-sg"
+      GroupDescription: Security group for the EKS cluster control plane
+      VpcId:
+        Fn::ImportValue: !Sub "${VpcStackName}-VpcId"
+      Tags:
+        - Key: Name
+          Value: !Sub "${ClusterName}-cluster-sg"
+        - Key: Project
+          Value: eks-hello-world
+
+  # ── EKS CLUSTER ───────────────────────────────────────────────────────
+  EKSCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !Ref ClusterName
+      Version: !Ref KubernetesVersion
+      RoleArn:
+        Fn::ImportValue: !Sub "${IamStackName}-EKSClusterRoleArn"
+      ResourcesVpcConfig:
+        SubnetIds:
+          - Fn::ImportValue: !Sub "${VpcStackName}-PublicSubnet1Id"
+          - Fn::ImportValue: !Sub "${VpcStackName}-PublicSubnet2Id"
+          - Fn::ImportValue: !Sub "${VpcStackName}-PrivateSubnet1Id"
+          - Fn::ImportValue: !Sub "${VpcStackName}-PrivateSubnet2Id"
+        SecurityGroupIds:
+          - !Ref ClusterSecurityGroup
+        EndpointPublicAccess: true
+        EndpointPrivateAccess: false
+      Tags:
+        - Key: Project
+          Value: eks-hello-world
+
+  # ── MANAGED NODE GROUP ────────────────────────────────────────────────
+  NodeGroup:
+    Type: AWS::EKS::Nodegroup
+    DependsOn: EKSCluster
+    Properties:
+      ClusterName: !Ref EKSCluster
+      NodegroupName: standard-workers
+      NodeRole:
+        Fn::ImportValue: !Sub "${IamStackName}-EKSNodeGroupRoleArn"
+      InstanceTypes:
+        - !Ref NodeInstanceType
+      ScalingConfig:
+        MinSize: !Ref NodeGroupMinSize
+        MaxSize: !Ref NodeGroupMaxSize
+        DesiredSize: !Ref NodeGroupDesiredSize
+      Subnets:
+        - Fn::ImportValue: !Sub "${VpcStackName}-PrivateSubnet1Id"
+        - Fn::ImportValue: !Sub "${VpcStackName}-PrivateSubnet2Id"
+      AmiType: AL2_x86_64
+      DiskSize: 20
+      Tags:
+        Project: eks-hello-world
+
+Outputs:
+  ClusterName:
+    Description: EKS cluster name
+    Value: !Ref EKSCluster
+    Export:
+      Name: !Sub "${AWS::StackName}-ClusterName"
+
+  ClusterEndpoint:
+    Description: EKS cluster API endpoint
+    Value: !GetAtt EKSCluster.Endpoint
+    Export:
+      Name: !Sub "${AWS::StackName}-ClusterEndpoint"
+
+  ClusterArn:
+    Description: EKS cluster ARN
+    Value: !GetAtt EKSCluster.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-ClusterArn"

@@ -1,0 +1,64 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  IAM roles for the EKS Hello World cluster.
+  Creates the EKS cluster service role and the EC2 node group instance role
+  with all required managed policies attached.
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: hello-world-cluster
+    Description: EKS cluster name (used for role naming)
+
+Resources:
+
+  # ── EKS CLUSTER ROLE ──────────────────────────────────────────────────
+  EKSClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ClusterName}-cluster-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+      Tags:
+        - Key: Project
+          Value: eks-hello-world
+
+  # ── EKS NODE GROUP ROLE ───────────────────────────────────────────────
+  EKSNodeGroupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ClusterName}-nodegroup-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+      Tags:
+        - Key: Project
+          Value: eks-hello-world
+
+Outputs:
+  EKSClusterRoleArn:
+    Description: ARN of the EKS cluster IAM role
+    Value: !GetAtt EKSClusterRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-EKSClusterRoleArn"
+
+  EKSNodeGroupRoleArn:
+    Description: ARN of the EKS node group IAM role
+    Value: !GetAtt EKSNodeGroupRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-EKSNodeGroupRoleArn"

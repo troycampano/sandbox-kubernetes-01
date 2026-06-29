@@ -1,0 +1,52 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ECR Repository for EKS Hello World application.
+  This stack is deployed first and separately so the Docker image
+  can be built and pushed before the EKS stack is created.
+
+Parameters:
+  RepositoryName:
+    Type: String
+    Default: eks-hello-world
+    Description: Name of the ECR repository
+
+Resources:
+
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref RepositoryName
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep only the last 5 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 5
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+      Tags:
+        - Key: Project
+          Value: eks-hello-world
+
+Outputs:
+  RepositoryUri:
+    Description: Full URI of the ECR repository
+    Value: !GetAtt ECRRepository.RepositoryUri
+    Export:
+      Name: !Sub "${AWS::StackName}-RepositoryUri"
+
+  RepositoryName:
+    Description: Name of the ECR repository
+    Value: !Ref ECRRepository
+    Export:
+      Name: !Sub "${AWS::StackName}-RepositoryName"
