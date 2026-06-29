@@ -12,7 +12,7 @@ Parameters:
 
   KubernetesVersion:
     Type: String
-    Default: '1.29'
+    Default: '1.32'
     Description: Kubernetes version for the EKS cluster
 
   NodeInstanceType:
