@@ -63,13 +63,15 @@ wait_for_stack() {
     case "$STATUS" in
       *_COMPLETE)
         if [[ "$STATUS" == *"ROLLBACK"* ]]; then
-          error "Stack '$STACK_NAME' failed with status: $STATUS. Check the AWS Console Events tab."
+          show_stack_failure_reason "$STACK_NAME"
+          error "Stack '$STACK_NAME' failed with status: $STATUS."
         fi
         success "Stack '$STACK_NAME' reached status: $STATUS"
         return 0
         ;;
       *_FAILED|*ROLLBACK*)
-        error "Stack '$STACK_NAME' failed with status: $STATUS. Check the AWS Console Events tab."
+        show_stack_failure_reason "$STACK_NAME"
+        error "Stack '$STACK_NAME' failed with status: $STATUS."
         ;;
       *)
         echo -ne "  ${YELLOW}Stack status: ${BOLD}$STATUS${RESET}${YELLOW} — attempt $ATTEMPTS/$MAX_ATTEMPTS${RESET}\r"
@@ -104,6 +106,20 @@ deploy_stack() {
     --query 'Stacks[0].StackStatus' \
     --output text 2>/dev/null || echo "DOES_NOT_EXIST")
 
+  # A ROLLBACK_COMPLETE stack cannot be updated — must delete and recreate
+  if [ "$STACK_EXISTS" = "ROLLBACK_COMPLETE" ]; then
+    warn "Stack '$STACK_NAME' is in ROLLBACK_COMPLETE state — deleting it before recreating..."
+    aws cloudformation delete-stack \
+      --stack-name "$STACK_NAME" \
+      --region "$AWS_REGION"
+    info "Waiting for stack '$STACK_NAME' deletion to complete..."
+    aws cloudformation wait stack-delete-complete \
+      --stack-name "$STACK_NAME" \
+      --region "$AWS_REGION"
+    success "Stack '$STACK_NAME' deleted — will recreate now."
+    STACK_EXISTS="DOES_NOT_EXIST"
+  fi
+
   if [ "$STACK_EXISTS" = "DOES_NOT_EXIST" ]; then
     info "Creating stack '$STACK_NAME'..."
     aws cloudformation create-stack \
@@ -128,6 +144,67 @@ deploy_stack() {
       return 0
     fi
   fi
+}
+
+# Fetch and display the CloudFormation events that caused a stack failure.
+show_stack_failure_reason() {
+  local STACK_NAME="$1"
+  echo ""
+  echo -e "${RED}${BOLD}  ── Failure Details for '$STACK_NAME' ──${RESET}"
+  echo ""
+  FAILED_EVENTS=$(aws cloudformation describe-stack-events \
+    --stack-name "$STACK_NAME" \
+    --region "$AWS_REGION" \
+    --query 'StackEvents[?contains(ResourceStatus, `FAILED`)].[Timestamp,LogicalResourceId,ResourceType,ResourceStatusReason]' \
+    --output table 2>/dev/null || true)
+  if [ -n "$FAILED_EVENTS" ]; then
+    echo "$FAILED_EVENTS"
+  else
+    echo -e "  ${YELLOW}No failure events found or events unavailable. Check the AWS Console.${RESET}"
+  fi
+  echo ""
+}
+
+# Check for CloudFormation stacks in a running or stuck state and prompt user.
+check_for_active_stacks() {
+  info "Checking for active or stuck CloudFormation stacks..."
+  ACTIVE_STACKS=$(aws cloudformation list-stacks \
+    --region "$AWS_REGION" \
+    --stack-status-filter \
+      CREATE_IN_PROGRESS UPDATE_IN_PROGRESS DELETE_IN_PROGRESS \
+      ROLLBACK_IN_PROGRESS UPDATE_ROLLBACK_IN_PROGRESS \
+      UPDATE_ROLLBACK_COMPLETE_CLEANUP_IN_PROGRESS \
+      REVIEW_IN_PROGRESS IMPORT_IN_PROGRESS IMPORT_ROLLBACK_IN_PROGRESS \
+    --query 'StackSummaries[].[StackName,StackStatus]' \
+    --output text 2>/dev/null || true)
+
+  if [ -z "$ACTIVE_STACKS" ]; then
+    success "No active or stuck stacks found — safe to proceed."
+    return 0
+  fi
+
+  echo ""
+  echo -e "${YELLOW}${BOLD}[WARN]  The following CloudFormation stacks are currently active or stuck:${RESET}"
+  echo ""
+  printf "  %-45s %s\n" "Stack Name" "Status"
+  printf "  %-45s %s\n" "─────────────────────────────────────────────" "──────────────────────────────────"
+  while IFS=$'\t' read -r NAME STATUS; do
+    printf "  ${YELLOW}%-45s${RESET} %s\n" "$NAME" "$STATUS"
+  done <<< "$ACTIVE_STACKS"
+  echo ""
+  echo -e "${YELLOW}${BOLD}[WARN]  These stacks may conflict with or block this setup.${RESET}"
+  echo ""
+  read -rp "  Continue anyway? [y/N]: " CONFIRM || true
+  echo ""
+  case "$CONFIRM" in
+    [yY][eE][sS]|[yY])
+      info "Continuing setup as requested..."
+      ;;
+    *)
+      info "Setup cancelled. Resolve the above stacks and re-run."
+      exit 0
+      ;;
+  esac
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -174,6 +251,9 @@ for TEMPLATE in "$CFN_ECR" "$CFN_VPC" "$CFN_IAM" "$CFN_EKS"; do
     error "CloudFormation template missing: $TEMPLATE"
   fi
 done
+echo ""
+
+check_for_active_stacks
 echo ""
 
 # ─────────────────────────────────────────────────────────────────────────────
