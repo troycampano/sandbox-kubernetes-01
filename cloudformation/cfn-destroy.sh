@@ -57,7 +57,15 @@ wait_for_delete() {
         return 0
         ;;
       DELETE_FAILED)
-        error "Stack '$STACK_NAME' deletion FAILED. Check the AWS Console Events tab for the root cause."
+        echo -e "${RED}${BOLD}[ERROR]${RESET} Stack '$STACK_NAME' deletion FAILED. Fetching failure events from CloudFormation..."
+        echo ""
+        aws cloudformation describe-stack-events \
+          --stack-name "$STACK_NAME" \
+          --region "$AWS_REGION" \
+          --query 'StackEvents[?ResourceStatus==`DELETE_FAILED`].[Timestamp,LogicalResourceId,ResourceType,ResourceStatusReason]' \
+          --output table 2>/dev/null || echo "  (Could not retrieve stack events)"
+        echo ""
+        exit 1
         ;;
       *)
         echo -ne "  ${YELLOW}Stack status: ${BOLD}$STATUS${RESET}${YELLOW} — attempt $ATTEMPTS/$MAX_ATTEMPTS${RESET}\r"
